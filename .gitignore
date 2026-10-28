@@ -1,0 +1,6 @@
+# Build output (go build -o sinan ./cmd/sinan)
+/sinan
+
+# Go test artifacts
+*.test
+*.out

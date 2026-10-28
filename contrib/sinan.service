@@ -1,0 +1,17 @@
+[Unit]
+Description=sinan - keep proxy traffic off untrusted Wi-Fi
+After=network.target
+
+[Service]
+ExecStart=/usr/local/bin/sinan -c /etc/sinan/config.yaml
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=always
+RestartSec=2
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_BPF CAP_PERFMON CAP_SYS_RESOURCE
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target
