@@ -25,7 +25,12 @@ direct: []
 # DNS servers for domain rules, queried directly through the uplink so that a
 # TUN-mode proxy cannot hijack them. Use what your proxy client uses for
 # proxy-server-nameserver. Empty: system resolver.
-dns: [223.5.5.5, 119.29.29.29]
+# These queries name your proxy nodes and leave through A, so encrypt them:
+#   https://IP[:port][/path]  DNS over HTTPS (path defaults to /dns-query)
+#   tls://IP[:port]           DNS over TLS
+#   IP[:port]                 plain DNS, readable by A's operator
+# Hosts must be IP addresses; the certificate is verified against the IP.
+dns: [https://223.5.5.5/dns-query, https://1.12.12.12/dns-query]
 
 # refresh: 10m        # re-resolve domains (source files are watched every 15s)
 # retain: 24h         # keep previously resolved endpoint addresses this long

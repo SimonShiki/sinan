@@ -67,6 +67,9 @@ many nodes are domestic relays, so a "proxied → B" rule would send exactly the
   doesn't know (e.g. the client resolved a node domain to an address sinan's
   DNS never returned) is treated as direct. Point `dns` at the client's
   `proxy-server-nameserver`.
+- Rule domains are resolved through A. Plain DNS there reveals your node names
+  to A's operator; use DoH/DoT servers in `dns`, and an encrypted
+  `proxy-server-nameserver` in the proxy client, which resolves them over A too.
 - Steering needs Ethernet-framed A and B. That covers Wi-Fi, RNDIS/NCM, iPhone
   and Bluetooth PAN. A family B lacks (e.g. no IPv6) is blocked instead.
 - Steered flows use A's MTU. ICMP errors for them (PMTU) are not translated,

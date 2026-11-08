@@ -71,3 +71,25 @@ proxy-groups: []
 		t.Errorf("ClashServers = %v", got)
 	}
 }
+
+func TestParseServer(t *testing.T) {
+	for in, want := range map[string]Server{
+		"223.5.5.5":                     {Proto: "udp", Addr: "223.5.5.5:53"},
+		"223.5.5.5:5353":                {Proto: "udp", Addr: "223.5.5.5:5353"},
+		"2400:3200::1":                  {Proto: "udp", Addr: "[2400:3200::1]:53"},
+		"tls://223.5.5.5":               {Proto: "tls", Addr: "223.5.5.5:853"},
+		"tls://[2400:3200::1]:8853":     {Proto: "tls", Addr: "[2400:3200::1]:8853"},
+		"https://223.5.5.5":             {Proto: "https", Addr: "223.5.5.5:443", URL: "https://223.5.5.5/dns-query"},
+		"https://1.12.12.12:8443/q?x=1": {Proto: "https", Addr: "1.12.12.12:8443", URL: "https://1.12.12.12:8443/q?x=1"},
+	} {
+		got, err := ParseServer(in)
+		if err != nil || got != want {
+			t.Errorf("ParseServer(%q) = %+v, %v; want %+v", in, got, err, want)
+		}
+	}
+	for _, bad := range []string{"dns.alidns.com", "https://dns.alidns.com/dns-query", "tls://223.5.5.5/x", "quic://223.5.5.5", "fe80::1%wlan0"} {
+		if _, err := ParseServer(bad); err == nil {
+			t.Errorf("ParseServer(%q) succeeded", bad)
+		}
+	}
+}

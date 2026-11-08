@@ -2,6 +2,7 @@ package ruleset
 
 import (
 	"context"
+	"log/slog"
 	"net"
 	"net/netip"
 	"sync"
@@ -28,23 +29,28 @@ type Resolver struct {
 // the same way proxy clients do.
 func (r *Resolver) Resolve(ctx context.Context, domains []string, dev string) []netip.Prefix {
 	resolvers := r.resolvers(dev)
+	defer func() {
+		for _, res := range resolvers {
+			res.close()
+		}
+	}()
 	now := time.Now()
 	type answer struct {
 		domain string
+		server int
 		addrs  []netip.Addr
+		err    error
 	}
 	ch := make(chan answer)
 	var wg sync.WaitGroup
 	for _, d := range domains {
-		for _, res := range resolvers {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+		for i, res := range resolvers {
+			wg.Go(func() {
 				ctx, cancel := context.WithTimeout(ctx, r.Timeout)
 				defer cancel()
-				addrs, _ := res.LookupNetIP(ctx, "ip", d)
-				ch <- answer{d, addrs}
-			}()
+				addrs, err := res.LookupNetIP(ctx, "ip", d)
+				ch <- answer{d, i, addrs, err}
+			})
 		}
 	}
 	go func() { wg.Wait(); close(ch) }()
@@ -54,12 +60,26 @@ func (r *Resolver) Resolve(ctx context.Context, domains []string, dev string) []
 	if r.seen == nil {
 		r.seen = map[string]map[netip.Addr]time.Time{}
 	}
+	answered := make([]bool, len(resolvers))
+	lastErr := make([]error, len(resolvers))
 	for a := range ch {
 		if r.seen[a.domain] == nil {
 			r.seen[a.domain] = map[netip.Addr]time.Time{}
 		}
 		for _, ip := range a.addrs {
 			r.seen[a.domain][ip.Unmap()] = now
+		}
+		if len(a.addrs) > 0 {
+			answered[a.server] = true
+		} else if a.err != nil {
+			lastErr[a.server] = a.err
+		}
+	}
+	// A server that resolves nothing is likely misconfigured or unreachable;
+	// say so instead of silently treating its endpoints as direct.
+	for i, res := range resolvers {
+		if !answered[i] && lastErr[i] != nil && ctx.Err() == nil {
+			slog.Warn("dns server resolved no rule domain", "server", res.name, "dev", dev, "err", lastErr[i])
 		}
 	}
 	var out []netip.Prefix
@@ -75,11 +95,19 @@ func (r *Resolver) Resolve(ctx context.Context, domains []string, dev string) []
 	return out
 }
 
-func (r *Resolver) resolvers(dev string) []*net.Resolver {
+type resolver struct {
+	lookuper
+	name  string
+	close func()
+}
+
+// resolvers returns one resolver per valid configured server (Servers are
+// validated with ParseServers at startup).
+func (r *Resolver) resolvers(dev string) []resolver {
 	if len(r.Servers) == 0 {
-		return []*net.Resolver{net.DefaultResolver}
+		return []resolver{{net.DefaultResolver, "system", func() {}}}
 	}
-	d := net.Dialer{Control: func(_, _ string, c syscall.RawConn) error {
+	d := &net.Dialer{Control: func(_, _ string, c syscall.RawConn) error {
 		if dev == "" {
 			return nil
 		}
@@ -90,18 +118,14 @@ func (r *Resolver) resolvers(dev string) []*net.Resolver {
 		}
 		return serr
 	}}
-	var out []*net.Resolver
+	var out []resolver
 	for _, s := range r.Servers {
-		addr := s
-		if _, _, err := net.SplitHostPort(s); err != nil {
-			addr = net.JoinHostPort(s, "53")
+		srv, err := ParseServer(s)
+		if err != nil {
+			continue
 		}
-		out = append(out, &net.Resolver{
-			PreferGo: true,
-			Dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
-				return d.DialContext(ctx, network, addr)
-			},
-		})
+		l, closeIdle := srv.lookuper(d)
+		out = append(out, resolver{l, s, closeIdle})
 	}
 	return out
 }

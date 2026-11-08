@@ -57,8 +57,11 @@ func New(cfg *config.Config) *Daemon {
 	}
 }
 
-// Validate checks that all static rules parse.
+// Validate checks that all static rules and DNS servers parse.
 func (d *Daemon) Validate() error {
+	if _, err := ruleset.ParseServers(d.cfg.DNS); err != nil {
+		return err
+	}
 	for _, rules := range [][]string{d.cfg.Proxy, d.cfg.Direct} {
 		if _, err := ruleset.Parse(rules); err != nil {
 			return err
