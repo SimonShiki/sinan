@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"golang.org/x/net/idna"
 	"gopkg.in/yaml.v3"
 )
 
@@ -34,12 +35,14 @@ func Parse(entries []string) (Rules, error) {
 			}
 			r.Prefixes = append(r.Prefixes, p.Masked())
 		default:
-			if a, err := netip.ParseAddr(strings.Trim(e, "[]")); err == nil {
+			if a, ok := parseIPLiteral(e); ok {
 				r.Prefixes = append(r.Prefixes, host(a))
-			} else if isDomain(e) {
-				r.Domains = append(r.Domains, strings.ToLower(strings.TrimSuffix(e, ".")))
 			} else {
-				return r, fmt.Errorf("invalid rule %q", e)
+				domain, err := normalizeDomain(e)
+				if err != nil {
+					return r, fmt.Errorf("invalid rule %q: %w", e, err)
+				}
+				r.Domains = append(r.Domains, domain)
 			}
 		}
 	}
@@ -112,14 +115,31 @@ func host(a netip.Addr) netip.Prefix {
 	return netip.PrefixFrom(a, a.BitLen())
 }
 
-func isDomain(s string) bool {
-	if len(s) > 253 || !strings.Contains(s, ".") {
-		return false
-	}
-	for _, c := range s {
-		if !(c == '-' || c == '.' || c == '_' || c >= '0' && c <= '9' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z') {
-			return false
+// parseIPLiteral accepts an IP with optional matching brackets, without a zone.
+// Routing prefixes cannot represent scoped IPv6 addresses.
+func parseIPLiteral(s string) (netip.Addr, bool) {
+	if strings.ContainsAny(s, "[]") {
+		if len(s) < 2 || s[0] != '[' || s[len(s)-1] != ']' || strings.ContainsAny(s[1:len(s)-1], "[]") {
+			return netip.Addr{}, false
 		}
+		s = s[1 : len(s)-1]
 	}
-	return true
+	a, err := netip.ParseAddr(s)
+	return a, err == nil && a.Zone() == ""
+}
+
+var domainIDNA = idna.New(idna.MapForLookup(), idna.BidiRule(), idna.VerifyDNSLength(true))
+
+// normalizeDomain converts a DNS hostname to its lowercase ASCII form.
+// Keep the rule format's requirement for at least two labels.
+func normalizeDomain(s string) (string, error) {
+	// Strip exactly one optional root dot; IDNA validates the remaining labels.
+	ascii, err := domainIDNA.ToASCII(strings.TrimSuffix(s, "."))
+	if err != nil {
+		return "", err
+	}
+	if !strings.Contains(ascii, ".") {
+		return "", fmt.Errorf("domain must have at least two labels")
+	}
+	return ascii, nil
 }

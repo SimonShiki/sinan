@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/netip"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -38,6 +39,8 @@ func ParseServer(s string) (Server, error) {
 	scheme, rest, ok := strings.Cut(s, "://")
 	if !ok {
 		scheme, rest = "udp", s
+	} else {
+		scheme = strings.ToLower(scheme)
 	}
 	var srv Server
 	switch scheme {
@@ -54,6 +57,9 @@ func ParseServer(s string) (Server, error) {
 		u, err := url.Parse(s)
 		if err != nil {
 			return srv, fmt.Errorf("dns %q: %w", s, err)
+		}
+		if u.User != nil || u.Fragment != "" {
+			return srv, fmt.Errorf("dns %q: user info and fragments are not allowed", s)
 		}
 		addr, err := ipPort(u.Host, "443")
 		if err != nil {
@@ -83,13 +89,17 @@ func ParseServers(ss []string) ([]Server, error) {
 func ipPort(s, defPort string) (string, error) {
 	host, port, err := net.SplitHostPort(s)
 	if err != nil {
-		host, port = strings.TrimSuffix(strings.TrimPrefix(s, "["), "]"), defPort
+		host, port = s, defPort
 	}
-	ip, err := netip.ParseAddr(host)
-	if err != nil || ip.Zone() != "" {
+	ip, ok := parseIPLiteral(host)
+	if !ok {
 		return "", fmt.Errorf("host must be an IP address")
 	}
-	return net.JoinHostPort(ip.String(), port), nil
+	n, err := strconv.ParseUint(port, 10, 16)
+	if err != nil || n == 0 {
+		return "", fmt.Errorf("port must be between 1 and 65535")
+	}
+	return net.JoinHostPort(ip.String(), strconv.FormatUint(n, 10)), nil
 }
 
 type lookuper interface {

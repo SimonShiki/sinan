@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -18,7 +19,7 @@ func prefixes(s ...string) []netip.Prefix {
 }
 
 func TestParse(t *testing.T) {
-	r, err := Parse([]string{"1.2.3.4", "10.0.0.1/8", "2001:db8::1", "[2001:db8::2]", "::ffff:1.1.1.1", "::ffff:5.6.7.8/120", "Node.Example.com.", " "})
+	r, err := Parse([]string{"1.2.3.4", "10.0.0.1/8", "2001:db8::1", "[2001:db8::2]", "::ffff:1.1.1.1", "::ffff:5.6.7.8/120", "Node.Example.com.", "bücher.example", " "})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -26,13 +27,24 @@ func TestParse(t *testing.T) {
 	if !slices.Equal(r.Prefixes, want) {
 		t.Errorf("prefixes = %v, want %v", r.Prefixes, want)
 	}
-	if !slices.Equal(r.Domains, []string{"node.example.com"}) {
+	if !slices.Equal(r.Domains, []string{"node.example.com", "xn--bcher-kva.example"}) {
 		t.Errorf("domains = %v", r.Domains)
 	}
-	for _, bad := range []string{"localhost", "1.2.3.4/33", "a b.com"} {
+	for _, bad := range []string{
+		"localhost", "1.2.3.4/33", "a b.com", ".example.com", "example..com", "example.com..",
+		"-bad.example", "bad-.example", "a_b.example", "xn--.example", "[[2001:db8::2]]",
+		"[2001:db8::2", "2001:db8::2]", "[node.example]", "fe80::1%eth0",
+		strings.Repeat("a", 64) + ".example",
+		strings.Join([]string{strings.Repeat("a", 63), strings.Repeat("b", 63), strings.Repeat("c", 63), strings.Repeat("d", 62)}, "."),
+	} {
 		if _, err := Parse([]string{bad}); err == nil {
 			t.Errorf("Parse(%q) succeeded", bad)
 		}
+	}
+
+	maxDomain := strings.Join([]string{strings.Repeat("a", 63), strings.Repeat("b", 63), strings.Repeat("c", 63), strings.Repeat("d", 61)}, ".")
+	if _, err := Parse([]string{maxDomain, maxDomain + "."}); err != nil {
+		t.Errorf("Parse(maximum-length domain) failed: %v", err)
 	}
 }
 
@@ -76,8 +88,11 @@ func TestParseServer(t *testing.T) {
 	for in, want := range map[string]Server{
 		"223.5.5.5":                     {Proto: "udp", Addr: "223.5.5.5:53"},
 		"223.5.5.5:5353":                {Proto: "udp", Addr: "223.5.5.5:5353"},
+		"223.5.5.5:00053":               {Proto: "udp", Addr: "223.5.5.5:53"},
 		"2400:3200::1":                  {Proto: "udp", Addr: "[2400:3200::1]:53"},
+		"[2400:3200::1]":                {Proto: "udp", Addr: "[2400:3200::1]:53"},
 		"tls://223.5.5.5":               {Proto: "tls", Addr: "223.5.5.5:853"},
+		"TLS://223.5.5.5":               {Proto: "tls", Addr: "223.5.5.5:853"},
 		"tls://[2400:3200::1]:8853":     {Proto: "tls", Addr: "[2400:3200::1]:8853"},
 		"https://223.5.5.5":             {Proto: "https", Addr: "223.5.5.5:443", URL: "https://223.5.5.5/dns-query"},
 		"https://1.12.12.12:8443/q?x=1": {Proto: "https", Addr: "1.12.12.12:8443", URL: "https://1.12.12.12:8443/q?x=1"},
@@ -87,7 +102,12 @@ func TestParseServer(t *testing.T) {
 			t.Errorf("ParseServer(%q) = %+v, %v; want %+v", in, got, err, want)
 		}
 	}
-	for _, bad := range []string{"dns.alidns.com", "https://dns.alidns.com/dns-query", "tls://223.5.5.5/x", "quic://223.5.5.5", "fe80::1%wlan0"} {
+	for _, bad := range []string{
+		"dns.alidns.com", "https://dns.alidns.com/dns-query", "tls://223.5.5.5/x", "quic://223.5.5.5", "fe80::1%wlan0",
+		"223.5.5.5:0", "223.5.5.5:65536", "223.5.5.5:abc", "223.5.5.5:", "223.5.5.5:+53",
+		"[2400:3200::1", "2400:3200::1]", "https://1.2.3.4:0/dns-query",
+		"https://user@1.2.3.4/dns-query", "https://1.2.3.4/dns-query#fragment",
+	} {
 		if _, err := ParseServer(bad); err == nil {
 			t.Errorf("ParseServer(%q) succeeded", bad)
 		}
